@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, DateTime, Enum, TIMESTAMP
-from sqlalchemy.orm import validates
+from sqlalchemy.orm import validates, relationship
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 import enum
@@ -29,8 +29,7 @@ class User(Base):
     status = Column(Enum(UserStatus), default=UserStatus.active)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
-
-
+    
     @validates('email')
     def validate_email(self, key, email):
         if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
