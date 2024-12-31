@@ -49,13 +49,13 @@ class CreateUserSchema(BaseModel):
     email: EmailStr
     phone_number: Optional[str] = Field(None, pattern=r"^\+?[1-9]\d{1,14}$")  # Use pattern instead of regex
     password: str = Field(..., min_length=8)
-    role: UserRoleEnum
     profile_path: Optional[str] = None
     status: UserStatusEnum = UserStatusEnum.active
     
 
 class LoginSchema(BaseModel):
     email: str
+    password : str
 
 
 class TokenResponse(BaseModel):
@@ -71,6 +71,7 @@ class UserData(BaseModel):
     name: Optional[str] = None
     phone_number: Optional[str] = None
     profile_path: Optional[str]
+    role : Optional[str] = None
     status: str
 
     class Config:
