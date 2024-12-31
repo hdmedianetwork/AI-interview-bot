@@ -19,13 +19,13 @@ class Database:
 
         # Configuring the Database Username,password details.
         try:
-            self.db_username = "postgres"#os.environ["DB_USERNAME"]
-            self.db_password = "krishna"#os.environ["DB_PASSWORD"]
+            self.db_username = os.environ["DB_USERNAME"]
+            self.db_password = os.environ["DB_PASSWORD"]
         except KeyError as e:
             logging.error(f'Missing environment variable: {e}')
             raise
 
-        self.db_host = "localhost"#os.environ["DB_HOST"]
+        self.db_host = os.environ["DB_HOST"]
         self.db_name = "ai_bot"  # Replace with your database name if it's not "postgres"
 
         try:
