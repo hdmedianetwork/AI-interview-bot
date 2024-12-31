@@ -83,7 +83,7 @@ def upload_resume(
             filename=file.filename,
             file_path=file_path,
             file_format=file_format,
-            status="uploaded"
+            status=True
         )
         db.add(new_resume)
         db.commit()

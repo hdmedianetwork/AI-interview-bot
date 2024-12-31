@@ -20,7 +20,7 @@ class ResumeUpload(Base):
     filename = Column(String(255), nullable=False)
     file_path = Column(String(255), nullable=False)
     file_format = Column(String(50), nullable=False)
-    status = Column(String(20), default="uploaded")
+    status = Column(String(20))
     error = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(
