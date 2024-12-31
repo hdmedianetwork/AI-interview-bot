@@ -1,14 +1,29 @@
 import uvicorn
 from fastapi.responses import RedirectResponse
 from fastapi import FastAPI
-from src.routers import users_router,qna_router,feedback_router
+from fastapi.middleware.cors import CORSMiddleware
+from src.routers import users_router, qna_router, feedback_router
 from src.config import APPNAME, VERSION
 
-from datetime import timedelta
 # Defining the application
 app = FastAPI(
     title=APPNAME,
     version=VERSION,
+)
+
+# Define allowed origins
+origins = [
+    "http://localhost:5173",  # Frontend during development
+    "http://127.0.0.1:5173",  # Alternate localhost
+]
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,  # List of allowed origins
+    allow_credentials=True,  # Allow cookies and credentials
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
 )
 
 # Including all the routes for the 'users' module
