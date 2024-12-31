@@ -13,3 +13,4 @@ python-dotenv==1.0.1
 loguru
 pydantic[email]
 passlib
+python-multipart

@@ -1,7 +1,7 @@
 import uvicorn
 from fastapi.responses import RedirectResponse
 from fastapi import FastAPI
-from src.routers import users_router
+from src.routers import users_router,qna_router
 from src.config import APPNAME, VERSION
 
 from datetime import timedelta
@@ -13,6 +13,7 @@ app = FastAPI(
 
 # Including all the routes for the 'users' module
 app.include_router(users_router)
+app.include_router(qna_router)
 
 @app.get("/")
 def main_function():
