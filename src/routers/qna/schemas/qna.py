@@ -38,3 +38,11 @@ class ResumeUploadResponse(BaseModel):
 
     class Config:
         orm_mode = True  # Allows Pydantic to work with ORM models
+
+# Define a Pydantic model for the request body
+class SubmitAnswerRequest(BaseModel):
+    qna_id: int
+    user_answer: str
+
+class EndInterviewRequest(BaseModel):
+    session_id: int

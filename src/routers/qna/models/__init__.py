@@ -1,5 +1,7 @@
-from .qna import ResumeUpload
+from .qna import ResumeUpload,QnA,Session
 
 __all__= [
-    "ResumeUpload"
+    "ResumeUpload",
+    "QnA",
+    "Session"
 ]

@@ -1,18 +1,20 @@
 from . import models
 from . import schemas
+from . import controller
 from fastapi import UploadFile,File,Form
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordBearer
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 from src.utils.db import get_db
 from fastapi.security import OAuth2PasswordBearer
-from fastapi import APIRouter, Depends, HTTPException,status,Request
+from fastapi import APIRouter, Depends, HTTPException,status,BackgroundTasks
 from loguru import logger as logging
 from typing import Optional
 import os
 from src.utils.jwt import  get_email_from_token
 from src.routers.users.models import users as users_model
 import urllib
+from datetime import datetime
 
 # Defining the router
 router = APIRouter(
@@ -22,8 +24,7 @@ router = APIRouter(
 )
 
 # Define the upload directory
-UPLOAD_DIRECTORY = r"G:\ReasonableWord\ML_DL project\AI-interview-bot\uploads"
-os.makedirs(UPLOAD_DIRECTORY, exist_ok=True)
+UPLOAD_DIRECTORY = os.environ['RESUME_UPLOAD_PATH']
 
 @router.post("/upload-resume", response_model=schemas.ResumeUploadResponse)
 def upload_resume(
@@ -111,5 +112,356 @@ def upload_resume(
             detail="An unexpected error occurred.",
         )
         
-        
 
+# @router.post("/start-interview/")
+# async def start_interview(
+#     db: Session = Depends(get_db),
+#     token: str = Depends(oauth2_scheme)  # Automatically extract Bearer token
+# ):
+#     try:
+#         # Decode email from the token
+#         email = get_email_from_token(token)
+
+#         # Check if user exists
+#         user = db.query(users_model.User).filter(users_model.User.email == email).first()
+#         if not user:
+#             return {
+#                 "success": False,
+#                 "status": 404,
+#                 "isActive": False,
+#                 "message": "User not found.",
+#                 "data": None,
+#             }
+
+#         # Get the latest resume for the user
+#         resume_upload = db.query(models.ResumeUpload).filter(models.ResumeUpload.user_id == user.id).order_by(models.ResumeUpload.id.desc()).first()
+#         if not resume_upload:
+#             return {
+#                 "success": False,
+#                 "status": 404,
+#                 "isActive": False,
+#                 "message": "No resume uploaded for this user.",
+#                 "data": None,
+#             }
+
+#         file_path = resume_upload.file_path
+#         if not os.path.exists(file_path):
+#             return {
+#                 "success": False,
+#                 "status": 404,
+#                 "isActive": False,
+#                 "message": "Resume file not found.",
+#                 "data": None,
+#             }
+
+#         # Extract text from the file
+#         if file_path.endswith(".pdf"):
+#             resume_text = controller.extract_text_from_pdf(file_path)
+#         elif file_path.endswith(".docx"):
+#             resume_text = controller.extract_text_from_docx(file_path)
+#         else:
+#             return {
+#                 "success": False,
+#                 "status": 400,
+#                 "isActive": False,
+#                 "message": "Unsupported file type.",
+#                 "data": None,
+#             }
+
+#         # Generate the first question
+#         question = controller.generate_question(resume_text)
+
+#         # Create a new QnA record in the database
+#         qna_entry = models.QnA(
+#             user_id=user.id,
+#             question_asked=question,
+#             generated_answer=None,  # Set as needed
+#             answer_review=None      # Set as needed
+#         )
+#         db.add(qna_entry)
+#         db.commit()
+#         db.refresh(qna_entry)
+
+#         return {
+#             "success": True,
+#             "status": 200,
+#             "isActive": True,
+#             "message": "Interview question generated successfully.",
+#             "data": {
+#                 "question": question,
+#                 "qna_id": qna_entry.id,
+#             },
+#         }
+
+#     except Exception as e:
+#         logging.error(f"Error in start_interview: {e}")
+#         return {
+#             "success": False,
+#             "status": 500,
+#             "isActive": False,
+#             "message": "An unexpected error occurred. Please try again later.",
+#             "data": None,
+#         }
+
+# @router.post("/submit-answer/")
+# async def submit_answer(
+#     request: schemas.SubmitAnswerRequest,  # Use the Pydantic model
+#     db: Session = Depends(get_db),
+#     token: str = Depends(oauth2_scheme)  # Automatically extract Bearer token
+# ):
+#     try:
+#         # Decode email from the token
+#         email = get_email_from_token(token)
+
+#         # Check if user exists
+#         user = db.query(users_model.User).filter(users_model.User.email == email).first()
+#         if not user:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail="User not found."
+#             )
+
+#         # Fetch the QnA record
+#         qna_entry = db.query(models.QnA).filter(models.QnA.id == request.qna_id, models.QnA.user_id == user.id).first()
+#         if not qna_entry:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail="QnA record not found."
+#             )
+
+#         # Analyze the given answer and assign a score
+#         score = controller.analyze_answer(request.user_answer)  # Replace with your analysis logic
+
+#         # If the score is low, generate a suitable answer
+#         generated_answer = None
+#         if score < 3:  # Threshold for a poor answer
+#             generated_answer = controller.generate_answer(qna_entry.question_asked)
+
+#         # Update the current QnA entry
+#         qna_entry.answer_given = request.user_answer
+#         qna_entry.answer_review = score
+#         qna_entry.generated_answer = generated_answer
+#         db.commit()
+
+#         # Generate the next question based on the last response
+#         last_response = generated_answer if generated_answer else request.user_answer
+#         next_question = controller.generate_question(last_response)
+
+#         # Check if the next question is valid
+#         if not next_question:
+#             raise HTTPException(
+#                 status_code=500,
+#                 detail="Failed to generate the next question."
+#             )
+
+#         # Create a new QnA entry for the next question
+#         next_qna_entry = models.QnA(
+#             user_id=user.id,
+#             question_asked=next_question,
+#             generated_answer=None,
+#             answer_review=None,
+#         )
+#         db.add(next_qna_entry)
+#         db.commit()
+#         db.refresh(next_qna_entry)
+
+#         return {
+#             "success": True,
+#             "status": 200,
+#             "isActive": True,
+#             "message": "Answer submitted successfully and next question generated.",
+#             "data": {
+#                 "score": score,
+#                 "generated_answer": generated_answer,
+#                 "next_question": next_question,
+#                 "next_qna_id": next_qna_entry.id,
+#             },
+#         }
+
+#     except HTTPException as http_error:
+#         # Return custom HTTPException errors
+#         logging.error(f"HTTPException occurred: {http_error.detail}")
+#         raise http_error
+
+#     except Exception as e:
+#         # Catch unexpected errors
+#         logging.error(f"Unexpected error in submit_answer: {e}")
+#         raise HTTPException(
+#             status_code=500,
+#             detail="An unexpected error occurred. Please try again later."
+#         )
+
+
+# Start interview endpoint
+@router.post("/start-interview/")
+async def start_interview(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
+):
+    try:
+        # Decode email from the token
+        email = get_email_from_token(token)
+        user = db.query(users_model.User).filter(users_model.User.email == email).first()
+
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        # Check if an active session exists
+        active_session = db.query(models.Session).filter_by(user_id=user.id, is_active=True).first()
+        if active_session:
+            raise HTTPException(status_code=400, detail="An interview session is already active.")
+
+        # Create a new interview session
+        new_session = models.Session(
+            user_id=user.id,
+            is_active=True,
+            start_time=datetime.utcnow()
+        )
+        db.add(new_session)
+        db.commit()
+        db.refresh(new_session)
+
+        # Add the background task to monitor session timeout
+        background_tasks.add_task(controller.enforce_session_timeout, new_session.id, db)
+
+        # Generate the first question
+        resume_upload = db.query(models.ResumeUpload).filter(models.ResumeUpload.user_id == user.id).order_by(models.ResumeUpload.id.desc()).first()
+        if not resume_upload:
+            raise HTTPException(status_code=404, detail="No resume uploaded.")
+
+        resume_text = controller.extract_text_from_pdf(resume_upload.file_path)  # Adjust logic based on file type
+        first_question = controller.generate_question(resume_text)
+
+        # Record the first QnA entry
+        qna_entry = models.QnA(
+            user_id=user.id,
+            session_id=new_session.id,
+            question_asked=first_question,
+            generated_answer=None
+        )
+        db.add(qna_entry)
+        db.commit()
+
+        return {
+            "success": True,
+            "session_id": new_session.id,
+            "question": first_question,
+            "qna_id": qna_entry.id,
+        }
+    except Exception as e:
+        logging.error(f"Error in start_interview: {e}")
+        raise HTTPException(status_code=500, detail="An error occurred.")
+
+
+# Submit answer endpoint
+@router.post("/submit-answer/")
+async def submit_answer(
+    request: schemas.SubmitAnswerRequest,  # Use a Pydantic model in real implementation
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
+):
+    try:
+        # Decode email from the token
+        email = get_email_from_token(token)
+        user = db.query(users_model.User).filter(users_model.User.email == email).first()
+
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        # Validate active session
+        active_session = db.query(models.Session).filter_by(user_id=user.id, is_active=True).first()
+        if not active_session:
+            raise HTTPException(status_code=400, detail="No active interview session found.")
+
+        # Fetch QnA record
+        qna_entry = db.query(models.QnA).filter(models.QnA.id == request.qna_id, models.QnA.user_id == user.id).first()
+        if not qna_entry:
+            raise HTTPException(
+                status_code=404,
+                detail="QnA record not found."
+            )
+        #Analyze the given answer and assign a score
+        score = controller.analyze_answer(request.user_answer)  # Replace with your analysis logic
+
+        # If the score is low, generate a suitable answer
+        generated_answer = None
+        if score < 3:  # Threshold for a poor answer
+            generated_answer = controller.generate_answer(qna_entry.question_asked)
+
+        # Update the current QnA entry
+        qna_entry.answer_given = request.user_answer
+        qna_entry.answer_review = score
+        qna_entry.generated_answer = generated_answer
+        db.commit()
+
+        next_question = controller.generate_question(request.user_answer)  # Generate the next question
+        # Create a new QnA entry for the next question, if valid
+        if next_question:
+            next_qna = models.QnA(
+                user_id=user.id,
+                session_id=active_session.id,
+                question_asked=next_question
+            )
+            db.add(next_qna)
+            db.commit()
+            return {
+                "success": True,
+                "score": score,
+                "next_qna_id": next_qna.id,
+                "next_question": next_question,
+            }
+        else:
+            # End session if no more questions
+            active_session.is_active = False
+            active_session.end_time = datetime.utcnow()
+            db.commit()
+            return {
+                "success": True,
+                "score": score,
+                "message": "Interview ended as no new questions were generated."
+            }
+    except Exception as e:
+        logging.error(f"Error in submit_answer: {e}")
+        raise HTTPException(status_code=500, detail="An error occurred.")
+    
+
+@router.post("/end-interview/")
+async def end_interview(
+    request: schemas.EndInterviewRequest,
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
+):
+    try:
+        # Decode email from the token
+        email = get_email_from_token(token)
+        user = db.query(users_model.User).filter(users_model.User.email == email).first()
+
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        # Fetch the session from the database
+        session = db.query(models.Session).filter(
+            models.Session.id == request.session_id,
+            models.Session.user_id == user.id
+        ).first()
+
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found.")
+        if not session.is_active:
+            raise HTTPException(status_code=400, detail="Session is already inactive.")
+
+        # End the session
+        session.is_active = False
+        session.end_time = datetime.utcnow()
+        db.commit()
+
+        return {
+            "success": True,
+            "message": "Interview session has been ended.",
+            "session_id": session.id,
+            "end_time": session.end_time
+        }
+    except Exception as e:
+        logging.error(f"Error in end_interview: {e}")
+        raise HTTPException(status_code=500, detail="An error occurred while ending the session.")
