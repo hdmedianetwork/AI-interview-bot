@@ -18,24 +18,32 @@ def extract_text_from_docx(file_path):
     doc = Document(file_path)
     return "\n".join(paragraph.text for paragraph in doc.paragraphs)
 
-
-# Initialize global variable to track question count
-question_count = 0
-def generate_question(resume_text, previous_answer=None):
+def generate_question(resume_text, session_id, db: Session, previous_answer=None):
     """
     Generate an interview question in a conversational and human-like manner.
-    
+
     Args:
         resume_text (str): The extracted text from the resume.
+        session_id (int): The ID of the current session.
+        db (Session): The database session to fetch existing questions.
         previous_answer (str): The answer to the previous question (optional).
-    
+
     Returns:
         str: A generated interview question.
     """
     global question_count
-    question_count += 1  # Increment question count
 
-    # Define a conversational tone and style
+    # Fetch the number of questions already asked in the current session
+    existing_questions_count = (
+        db.query(models.QnA)
+        .filter(models.QnA.session_id == session_id)
+        .count()
+    )
+
+    # Initialize or update the global question count
+    question_count = existing_questions_count + 1
+
+    # Define a conversational tone and style based on the question count
     if question_count == 1:
         prompt = "Start the interview with a friendly and general question to make the candidate feel comfortable. Avoid anything technical."
     elif question_count == 2:
@@ -54,15 +62,15 @@ def generate_question(resume_text, previous_answer=None):
             - Speak naturally, as if you're sitting across the candidate in a real interview.
             - Base the question loosely on the resume content if applicable, but avoid being overly technical or scripted.
             - If a previous answer is provided, consider following up naturally on it.
-            
+
             Resume Content:
             {resume_text}
-            
+
             {f"Previous Answer: {previous_answer}" if previous_answer else ""}
             """
         }
     ]
-    
+
     # Call OpenAI Chat API to generate a question
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",  # Replace with "gpt-4" if needed
@@ -72,11 +80,12 @@ def generate_question(resume_text, previous_answer=None):
         frequency_penalty=0.2,
         presence_penalty=0.3,
     )
-    
+
     # Prepend question number to the generated question
     question = response['choices'][0]['message']['content'].strip()
-    logging.error(f"questiin: {f"Question {question_count}: {question}"}")
+    logging.info(f"Generated question: {question}")
     return f"Question {question_count}: {question}"
+
 
 
 def analyze_answer(user_answer: str) -> int:

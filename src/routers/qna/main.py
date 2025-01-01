@@ -15,6 +15,12 @@ from src.utils.jwt import  get_email_from_token
 from src.routers.users.models import users as users_model
 import urllib
 from datetime import datetime
+import openai
+from threading import Lock
+
+# Global dictionary to store session-related data
+session_data_store = {}
+session_data_lock = Lock()
 
 # Defining the router
 router = APIRouter(
@@ -312,6 +318,24 @@ async def start_interview(
         if active_session:
             raise HTTPException(status_code=400, detail="An interview session is already active.")
 
+        # Extract resume text
+        resume_upload = db.query(models.ResumeUpload).filter(models.ResumeUpload.user_id == user.id).order_by(models.ResumeUpload.id.desc()).first()
+        if not resume_upload:
+            raise HTTPException(status_code=404, detail="No resume uploaded.")
+        
+        file_extention = resume_upload.file_format
+        if file_extention == "pdf":
+            resume_text = controller.extract_text_from_pdf(resume_upload.file_path)
+        else:
+            resume_text = controller.extract_text_from_docx(resume_upload.file_path)
+
+        # Store resume_text in the global dictionary
+        with session_data_lock:
+            session_data_store[user.id] = {
+                "resume_text": resume_text,
+                "session_id": None  # Placeholder for session ID
+            }
+
         # Create a new interview session
         new_session = models.Session(
             user_id=user.id,
@@ -322,16 +346,15 @@ async def start_interview(
         db.commit()
         db.refresh(new_session)
 
+        # Save session ID in the global dictionary
+        with session_data_lock:
+            session_data_store[user.id]["session_id"] = new_session.id
+
         # Add the background task to monitor session timeout
         background_tasks.add_task(controller.enforce_session_timeout, new_session.id, db)
 
         # Generate the first question
-        resume_upload = db.query(models.ResumeUpload).filter(models.ResumeUpload.user_id == user.id).order_by(models.ResumeUpload.id.desc()).first()
-        if not resume_upload:
-            raise HTTPException(status_code=404, detail="No resume uploaded.")
-
-        resume_text = controller.extract_text_from_pdf(resume_upload.file_path)  # Adjust logic based on file type
-        first_question = controller.generate_question(resume_text)
+        first_question = controller.generate_question(resume_text, new_session.id, db)
 
         # Record the first QnA entry
         qna_entry = models.QnA(
@@ -357,7 +380,7 @@ async def start_interview(
 # Submit answer endpoint
 @router.post("/submit-answer/")
 async def submit_answer(
-    request: schemas.SubmitAnswerRequest,  # Use a Pydantic model in real implementation
+    request: schemas.SubmitAnswerRequest,
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme)
 ):
@@ -377,12 +400,16 @@ async def submit_answer(
         # Fetch QnA record
         qna_entry = db.query(models.QnA).filter(models.QnA.id == request.qna_id, models.QnA.user_id == user.id).first()
         if not qna_entry:
-            raise HTTPException(
-                status_code=404,
-                detail="QnA record not found."
-            )
-        #Analyze the given answer and assign a score
-        score = controller.analyze_answer(request.user_answer)  # Replace with your analysis logic
+            raise HTTPException(status_code=404, detail="QnA record not found.")
+
+        # Retrieve the resume_text from the global dictionary
+        with session_data_lock:
+            if user.id not in session_data_store:
+                raise HTTPException(status_code=400, detail="No resume data found for the session.")
+            resume_text = session_data_store[user.id]["resume_text"]
+
+        # Analyze the given answer and assign a score
+        score = controller.analyze_answer(request.user_answer)
 
         # If the score is low, generate a suitable answer
         generated_answer = None
@@ -395,7 +422,14 @@ async def submit_answer(
         qna_entry.generated_answer = generated_answer
         db.commit()
 
-        next_question = controller.generate_question(request.user_answer)  # Generate the next question
+        # Generate the next question
+        next_question = controller.generate_question(
+            resume_text=resume_text,
+            session_id=active_session.id,
+            db=db,
+            previous_answer=request.user_answer
+        )
+
         # Create a new QnA entry for the next question, if valid
         if next_question:
             next_qna = models.QnA(
@@ -424,7 +458,7 @@ async def submit_answer(
     except Exception as e:
         logging.error(f"Error in submit_answer: {e}")
         raise HTTPException(status_code=500, detail="An error occurred.")
-    
+
 
 @router.post("/end-interview/")
 async def end_interview(
@@ -465,3 +499,128 @@ async def end_interview(
     except Exception as e:
         logging.error(f"Error in end_interview: {e}")
         raise HTTPException(status_code=500, detail="An error occurred while ending the session.")
+
+
+
+@router.get("/generate-interview-report/")
+async def generate_interview_report(
+    request: schemas.EndInterviewRequest,
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
+):
+    try:
+        # Decode email from the token
+        email = get_email_from_token(token)
+        user = db.query(users_model.User).filter(users_model.User.email == email).first()
+
+        if not user:
+            return {
+                "success": False,
+                "status": 404,
+                "message": "User not found.",
+                "report": None
+            }
+
+        # Fetch the session details
+        session = db.query(models.Session).filter(
+            models.Session.id == request.session_id,
+            models.Session.user_id == user.id
+        ).first()
+
+        if not session:
+            return {
+                "success": False,
+                "status": 404,
+                "message": "Session not found.",
+                "report": None
+            }
+
+        # Fetch all QnA records for the session
+        qna_records = db.query(models.QnA).filter(
+            models.QnA.session_id == session.id
+        ).all()
+
+        if not qna_records:
+            return {
+                "success": False,
+                "status": 404,
+                "message": "No QnA records found for the session.",
+                "report": None
+            }
+
+        # Calculate report details
+        total_questions = len(qna_records)
+        total_score = sum(qna.answer_review for qna in qna_records if qna.answer_review is not None)
+        max_possible_score = total_questions * 5  # Assuming a 5-point scale
+
+        # Identify improvement areas
+        improvement_areas = [
+            {
+                "question": qna.question_asked,
+                "answer_given": qna.answer_given,
+                "suggested_answer": qna.generated_answer
+            }
+            for qna in qna_records if qna.answer_review is not None and qna.answer_review < 3
+        ]
+
+        # Generate study suggestions using OpenAI
+        try:
+            if improvement_areas:
+                study_topics = [area["question"] for area in improvement_areas]
+                openai.api_key = os.environ['OPENAI_KEY']
+                if not openai.api_key:
+                    raise ValueError("Missing OpenAI API key.")
+
+                openai_response = openai.ChatCompletion.create(
+                    model="gpt-4o-mini-2024-07-18",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are an expert assistant providing study suggestions."
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Provide detailed study suggestions based on the following topics: {study_topics}"
+                        }
+                    ],
+                    max_tokens=150
+                )
+                suggestions = openai_response.choices[0].message.content.strip()
+            else:
+                suggestions = "No specific study suggestions needed; all answers were rated sufficiently."
+        except Exception as openai_error:
+            logging.error(f"OpenAI API Error: {openai_error}")
+            suggestions = "Unable to fetch study suggestions due to an internal issue."
+
+        # Compile the report
+        report = {
+            "Session Details": {
+                "Session ID": session.id,
+                "User Email": user.email,
+                "Start Time": session.start_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "End Time": session.end_time.strftime("%Y-%m-%d %H:%M:%S") if session.end_time else "In Progress"
+            },
+            "Performance Summary": {
+                "Total Questions": total_questions,
+                "Total Score": total_score,
+                "Maximum Possible Score": max_possible_score
+            },
+            "Areas for Improvement": improvement_areas,
+            "Study Suggestions": suggestions
+        }
+
+        return {
+            "success": True,
+            "status": 200,
+            "message": "Report generated successfully.",
+            "report": report
+        }
+
+    except Exception as e:
+        logging.error(f"Error in generate_interview_report: {e}")
+        return {
+            "success": False,
+            "status": 500,
+            "message": "An error occurred while generating the report.",
+            "report": None
+        }

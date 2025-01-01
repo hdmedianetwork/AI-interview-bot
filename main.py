@@ -2,7 +2,7 @@ import uvicorn
 from fastapi.responses import RedirectResponse
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from src.routers import users_router, qna_router, feedback_router
+from src.routers import users_router, qna_router, feedback_router,dashboard_route
 from src.config import APPNAME, VERSION
 
 # Defining the application
@@ -30,6 +30,7 @@ app.add_middleware(
 app.include_router(users_router)
 app.include_router(qna_router)
 app.include_router(feedback_router)
+app.include_router(dashboard_route)
 
 @app.get("/")
 def main_function():
