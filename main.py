@@ -15,6 +15,7 @@ app = FastAPI(
 origins = [
     "http://localhost:5173",  # Frontend during development
     "http://127.0.0.1:5173",  # Alternate localhost
+    "http://ec2-3-219-12-193.compute-1.amazonaws.com:5173",
 ]
 
 # Add CORS middleware

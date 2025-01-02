@@ -26,7 +26,7 @@ class Database:
             raise
 
         self.db_host = os.environ["DB_HOST"]
-        self.db_name = "ai_bot"  # Replace with your database name if it's not "postgres"
+        self.db_name = os.environ["DB_NAME"]  # Replace with your database name if it's not "postgres"
 
         try:
             # Default to the "public" schema

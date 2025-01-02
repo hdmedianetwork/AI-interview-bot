@@ -17,6 +17,8 @@ import urllib
 from datetime import datetime
 import openai
 from threading import Lock
+import boto3
+import io
 
 # Global dictionary to store session-related data
 session_data_store = {}
@@ -31,17 +33,20 @@ router = APIRouter(
 
 # Define the upload directory
 UPLOAD_DIRECTORY = os.environ['RESUME_UPLOAD_PATH']
+# Initialize Boto3 client (IAM role will automatically be used)
+s3_client = boto3.client('s3', region_name='us-east-1')  # replace with your region
+BUCKET_NAME = 'ai-interview-bot'
+logging.error(f"s3_client:{s3_client}")
+
+
 
 @router.post("/upload-resume", response_model=schemas.ResumeUploadResponse)
-def upload_resume(
+async def upload_resume(
     file: UploadFile = File(...),
     user_id: Optional[int] = Form(None),
     token: str = Depends(OAuth2PasswordBearer(tokenUrl="token")),
     db: Session = Depends(get_db),
 ):
-    """
-    Upload a resume and store its details in the database.
-    """
     try:
         # Decode user information from the token
         email = get_email_from_token(token)
@@ -73,35 +78,64 @@ def upload_resume(
                 detail=f"Invalid file format. Allowed formats: {', '.join(ALLOWED_FORMATS)}.",
             )
 
-       # Save the file with a unique path and filename
+        # Read the file content once
+        file_content = await file.read()
+
+        # Save the file locally
         email_directory = os.path.join(UPLOAD_DIRECTORY, email)
         os.makedirs(email_directory, exist_ok=True)  # Ensure the directory exists
+        local_file_path = os.path.join(email_directory, file.filename)
 
-        file_path = os.path.join(email_directory, file.filename)
+        with open(local_file_path, "wb") as local_file:
+            local_file.write(file_content)
 
-        with open(file_path, "wb") as f:
-            f.write(file.file.read())
+        # Prepare S3 upload
+        file_key = f"resume_upload/{email}/{file.filename}"
 
-        # URL-safe file path for external use (e.g., API response)
-        safe_file_path = urllib.parse.quote(file_path)
-        # Create a new resume record
+        # Determine content type
+        if file_format == "pdf":
+            content_type = "application/pdf"
+        elif file_format == "docx":
+            content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif file_format == "doc":
+            content_type = "application/msword"
+        else:
+            raise ValueError("Unsupported file extension.")
+
+        # Upload the file to S3
+        try:
+            s3_client.put_object(
+                Bucket=BUCKET_NAME,
+                Key=file_key,
+                Body=io.BytesIO(file_content).getvalue(),  # Reuse file content
+                ContentType=content_type
+            )
+            logging.info("File uploaded successfully to S3.")
+        except Exception as e:
+            logging.error(f"Failed to upload file to S3: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to upload file to S3."
+            )
+
+        # Save file details in the database
         new_resume = models.ResumeUpload(
             user_id=user_id,
             filename=file.filename,
-            file_path=file_path,
+            file_path=local_file_path,  # S3 key instead of local path
             file_format=file_format,
-            status=True
+            status=True,
         )
         db.add(new_resume)
         db.commit()
         db.refresh(new_resume)
 
-        # Prepare the response
+        # Prepare and return the response
         return schemas.ResumeUploadResponse(
             id=new_resume.id,
             user_id=new_resume.user_id,
             filename=new_resume.filename,
-            file_path=new_resume.file_path,
+            file_path=f"https://{BUCKET_NAME}.s3.amazonaws.com/{file_key}",
             file_format=new_resume.file_format,
             status=new_resume.status,
             error=new_resume.error,
@@ -109,194 +143,12 @@ def upload_resume(
             updated_at=new_resume.updated_at,
         )
 
-    except HTTPException as e:
-        raise e
     except Exception as e:
-        logging.error(f"Unexpected error: {e}")
+        logging.error(f"Exception while processing upload: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred.",
+            detail="An error occurred while processing the upload."
         )
-        
-
-# @router.post("/start-interview/")
-# async def start_interview(
-#     db: Session = Depends(get_db),
-#     token: str = Depends(oauth2_scheme)  # Automatically extract Bearer token
-# ):
-#     try:
-#         # Decode email from the token
-#         email = get_email_from_token(token)
-
-#         # Check if user exists
-#         user = db.query(users_model.User).filter(users_model.User.email == email).first()
-#         if not user:
-#             return {
-#                 "success": False,
-#                 "status": 404,
-#                 "isActive": False,
-#                 "message": "User not found.",
-#                 "data": None,
-#             }
-
-#         # Get the latest resume for the user
-#         resume_upload = db.query(models.ResumeUpload).filter(models.ResumeUpload.user_id == user.id).order_by(models.ResumeUpload.id.desc()).first()
-#         if not resume_upload:
-#             return {
-#                 "success": False,
-#                 "status": 404,
-#                 "isActive": False,
-#                 "message": "No resume uploaded for this user.",
-#                 "data": None,
-#             }
-
-#         file_path = resume_upload.file_path
-#         if not os.path.exists(file_path):
-#             return {
-#                 "success": False,
-#                 "status": 404,
-#                 "isActive": False,
-#                 "message": "Resume file not found.",
-#                 "data": None,
-#             }
-
-#         # Extract text from the file
-#         if file_path.endswith(".pdf"):
-#             resume_text = controller.extract_text_from_pdf(file_path)
-#         elif file_path.endswith(".docx"):
-#             resume_text = controller.extract_text_from_docx(file_path)
-#         else:
-#             return {
-#                 "success": False,
-#                 "status": 400,
-#                 "isActive": False,
-#                 "message": "Unsupported file type.",
-#                 "data": None,
-#             }
-
-#         # Generate the first question
-#         question = controller.generate_question(resume_text)
-
-#         # Create a new QnA record in the database
-#         qna_entry = models.QnA(
-#             user_id=user.id,
-#             question_asked=question,
-#             generated_answer=None,  # Set as needed
-#             answer_review=None      # Set as needed
-#         )
-#         db.add(qna_entry)
-#         db.commit()
-#         db.refresh(qna_entry)
-
-#         return {
-#             "success": True,
-#             "status": 200,
-#             "isActive": True,
-#             "message": "Interview question generated successfully.",
-#             "data": {
-#                 "question": question,
-#                 "qna_id": qna_entry.id,
-#             },
-#         }
-
-#     except Exception as e:
-#         logging.error(f"Error in start_interview: {e}")
-#         return {
-#             "success": False,
-#             "status": 500,
-#             "isActive": False,
-#             "message": "An unexpected error occurred. Please try again later.",
-#             "data": None,
-#         }
-
-# @router.post("/submit-answer/")
-# async def submit_answer(
-#     request: schemas.SubmitAnswerRequest,  # Use the Pydantic model
-#     db: Session = Depends(get_db),
-#     token: str = Depends(oauth2_scheme)  # Automatically extract Bearer token
-# ):
-#     try:
-#         # Decode email from the token
-#         email = get_email_from_token(token)
-
-#         # Check if user exists
-#         user = db.query(users_model.User).filter(users_model.User.email == email).first()
-#         if not user:
-#             raise HTTPException(
-#                 status_code=404,
-#                 detail="User not found."
-#             )
-
-#         # Fetch the QnA record
-#         qna_entry = db.query(models.QnA).filter(models.QnA.id == request.qna_id, models.QnA.user_id == user.id).first()
-#         if not qna_entry:
-#             raise HTTPException(
-#                 status_code=404,
-#                 detail="QnA record not found."
-#             )
-
-#         # Analyze the given answer and assign a score
-#         score = controller.analyze_answer(request.user_answer)  # Replace with your analysis logic
-
-#         # If the score is low, generate a suitable answer
-#         generated_answer = None
-#         if score < 3:  # Threshold for a poor answer
-#             generated_answer = controller.generate_answer(qna_entry.question_asked)
-
-#         # Update the current QnA entry
-#         qna_entry.answer_given = request.user_answer
-#         qna_entry.answer_review = score
-#         qna_entry.generated_answer = generated_answer
-#         db.commit()
-
-#         # Generate the next question based on the last response
-#         last_response = generated_answer if generated_answer else request.user_answer
-#         next_question = controller.generate_question(last_response)
-
-#         # Check if the next question is valid
-#         if not next_question:
-#             raise HTTPException(
-#                 status_code=500,
-#                 detail="Failed to generate the next question."
-#             )
-
-#         # Create a new QnA entry for the next question
-#         next_qna_entry = models.QnA(
-#             user_id=user.id,
-#             question_asked=next_question,
-#             generated_answer=None,
-#             answer_review=None,
-#         )
-#         db.add(next_qna_entry)
-#         db.commit()
-#         db.refresh(next_qna_entry)
-
-#         return {
-#             "success": True,
-#             "status": 200,
-#             "isActive": True,
-#             "message": "Answer submitted successfully and next question generated.",
-#             "data": {
-#                 "score": score,
-#                 "generated_answer": generated_answer,
-#                 "next_question": next_question,
-#                 "next_qna_id": next_qna_entry.id,
-#             },
-#         }
-
-#     except HTTPException as http_error:
-#         # Return custom HTTPException errors
-#         logging.error(f"HTTPException occurred: {http_error.detail}")
-#         raise http_error
-
-#     except Exception as e:
-#         # Catch unexpected errors
-#         logging.error(f"Unexpected error in submit_answer: {e}")
-#         raise HTTPException(
-#             status_code=500,
-#             detail="An unexpected error occurred. Please try again later."
-#         )
-
 
 # Start interview endpoint
 @router.post("/start-interview/")
