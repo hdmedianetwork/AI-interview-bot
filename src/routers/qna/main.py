@@ -218,7 +218,7 @@ async def start_interview(
         background_tasks.add_task(controller.enforce_session_timeout, new_session.id, db)
 
         # Generate the first question
-        first_question = controller.generate_question(resume_text, new_session.id, db)
+        first_question = controller.generate_question(job_title,job_description,resume_text, new_session.id, db)
 
         # Record the first QnA entry
         qna_entry = models.QnA(
@@ -271,6 +271,8 @@ async def submit_answer(
             if user.id not in session_data_store:
                 raise HTTPException(status_code=400, detail="No resume data found for the session.")
             resume_text = session_data_store[user.id]["resume_text"]
+            job_title = session_data_store[user.id]["job_title"]
+            job_description = session_data_store[user.id]["job_description"]
 
         # Analyze the given answer and assign a score
         score = controller.analyze_answer(request.user_answer)
@@ -288,6 +290,8 @@ async def submit_answer(
 
         # Generate the next question
         next_question = controller.generate_question(
+            job_title = job_title,
+            job_description=job_description,
             resume_text=resume_text,
             session_id=active_session.id,
             db=db,
