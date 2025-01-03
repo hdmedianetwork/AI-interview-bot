@@ -8,7 +8,9 @@ from sqlalchemy import (
     func,
     CheckConstraint,
     DateTime,
-    Boolean
+    Boolean,
+    Date,
+    Time
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
@@ -53,7 +55,16 @@ class Session(Base):
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=True)
     
-    
+class ScheduleInterview(Base):
+    __tablename__ = "interviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    candidate_name = Column(String, nullable=False)
+    candidate_email = Column(String, nullable=False)
+    interviewer = Column(String, nullable=False)
+    interview_date = Column(Date, nullable=False)
+    interview_time = Column(Time, nullable=False)
+    is_completed = Column(Boolean, default=False)
 """
 CREATE TABLE sessions (
     id SERIAL PRIMARY KEY,

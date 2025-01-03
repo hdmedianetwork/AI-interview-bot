@@ -1,6 +1,8 @@
-from pydantic import BaseModel
+from pydantic import BaseModel,EmailStr
 from typing import Optional
 from datetime import datetime
+from datetime import date, time
+
 
 
 class ResumeUploadBase(BaseModel):
@@ -46,3 +48,17 @@ class SubmitAnswerRequest(BaseModel):
 
 class EndInterviewRequest(BaseModel):
     session_id: int
+    
+class InterviewCreate(BaseModel):
+    candidate_name: str
+    candidate_email: EmailStr
+    interviewer: str
+    interview_date: date
+    interview_time: time
+
+class InterviewResponse(InterviewCreate):
+    id: int
+    is_completed: bool
+
+    class Config:
+        orm_mode = True

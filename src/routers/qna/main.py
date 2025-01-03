@@ -476,3 +476,50 @@ async def generate_interview_report(
             "message": "An error occurred while generating the report.",
             "report": None
         }
+
+
+# Dummy database for storing interviews
+interview_db = []
+
+
+@router.post("/schedule-interview/", response_model=schemas.InterviewResponse)
+async def schedule_interview(
+    interview: schemas.InterviewCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
+):
+    # Check if an interview already exists for the same time and interviewer
+    existing_interview = db.query(models.ScheduleInterview).filter(
+        models.ScheduleInterview.interviewer == interview.interviewer,
+        models.ScheduleInterview.interview_date == interview.interview_date,
+        models.ScheduleInterview.interview_time == interview.interview_time,
+    ).first()
+    if existing_interview:
+        raise HTTPException(
+            status_code=400, detail="The interviewer is already scheduled at this time."
+        )
+
+    # Create a new interview record
+    new_interview = models.ScheduleInterview(
+        candidate_name=interview.candidate_name,
+        candidate_email=interview.candidate_email,
+        interviewer=interview.interviewer,
+        interview_date=interview.interview_date,
+        interview_time=interview.interview_time,
+    )
+    db.add(new_interview)
+    db.commit()
+    db.refresh(new_interview)
+
+    # Prepare and send email
+    subject = "Interview Scheduled"
+    message = (
+        f"Dear {interview.candidate_name},\n\n"
+        f"Your interview has been scheduled with {interview.interviewer}.\n"
+        f"Date: {interview.interview_date.strftime('%d-%m-%Y')}\n"
+        f"Time: {interview.interview_time.strftime('%H:%M')}\n\n"
+        f"Best regards,\nYour Company"
+    )
+    background_tasks.add_task(
+        controller.send_email, to_email=interview.candidate_email, subject=subject, message=message
+    )
+
+    return new_interview

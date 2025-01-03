@@ -7,6 +7,11 @@ from loguru import logger as logging
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from . import models
+
+import smtplib  # For sending emails
+from email.mime.text import MIMEText
+
+
 # Set up OpenAI API key
 openai.api_key = os.environ['OPENAI_KEY']
 
@@ -17,6 +22,7 @@ def extract_text_from_pdf(file_path):
 def extract_text_from_docx(file_path):
     doc = Document(file_path)
     return "\n".join(paragraph.text for paragraph in doc.paragraphs)
+
 
 def generate_question(resume_text, session_id, db: Session, previous_answer=None):
     """
@@ -75,7 +81,7 @@ def generate_question(resume_text, session_id, db: Session, previous_answer=None
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",  # Replace with "gpt-4" if needed
         messages=messages,
-        max_tokens=50,
+        max_tokens=100,
         temperature=0.8,  # Slightly increase creativity for varied questions
         frequency_penalty=0.2,
         presence_penalty=0.3,
@@ -197,3 +203,22 @@ def enforce_session_timeout(session_id: int, db: Session):
             logging.info(f"Session {session_id} timed out and has been ended.")
     except Exception as e:
         logging.error(f"Error in enforce_session_timeout: {e}")
+
+# Utility function to send email
+def send_email(to_email: str, subject: str, message: str):
+    try:
+        sender_email = os.environ['EMAIL'] # Replace with your email
+        sender_password = os.environ['APP_PASSWORD']       # Replace with your email password
+
+        # Create the email
+        msg = MIMEText(message)
+        msg['Subject'] = subject
+        msg['From'] = sender_email
+        msg['To'] = to_email
+
+        # Connect to the server and send the email
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:  # Adjust for your email provider
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, to_email, msg.as_string())
+    except Exception as e:
+        print(f"Failed to send email: {e}")
