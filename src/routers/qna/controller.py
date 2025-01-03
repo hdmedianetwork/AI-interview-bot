@@ -25,11 +25,13 @@ def extract_text_from_docx(file_path):
     return "\n".join(paragraph.text for paragraph in doc.paragraphs)
 
 
-def generate_question(resume_text, session_id, db: Session, previous_answer=None):
+def generate_question(job_title, job_description, resume_text, session_id, db: Session, previous_answer=None):
     """
     Generate an interview question in a conversational and human-like manner.
 
     Args:
+        job_title (str): The job title from the resume.
+        job_description (str): The job description from the resume.
         resume_text (str): The extracted text from the resume.
         session_id (int): The ID of the current session.
         db (Session): The database session to fetch existing questions.
@@ -38,8 +40,6 @@ def generate_question(resume_text, session_id, db: Session, previous_answer=None
     Returns:
         str: A generated interview question.
     """
-    global question_count
-
     # Fetch the number of questions already asked in the current session
     existing_questions_count = (
         db.query(models.QnA)
@@ -47,52 +47,45 @@ def generate_question(resume_text, session_id, db: Session, previous_answer=None
         .count()
     )
 
-    # Initialize or update the global question count
+    # Determine the current question number
     question_count = existing_questions_count + 1
 
-    # Define a conversational tone and style based on the question count
+    # Define the style and focus of the question
     if question_count == 1:
-        prompt = "Start the interview with a friendly and general question to make the candidate feel comfortable. Avoid anything technical."
+        prompt = f"Start with a friendly question to break the ice, based on their job title: {job_title}."
     elif question_count == 2:
-        prompt = "Ask a general question about their career or background, keeping it light and conversational."
+        prompt = f"Ask about their experience in the role: {job_title}. Use details from the job description: {job_description}."
     else:
-        prompt = "Begin transitioning into slightly more specific questions related to their experience and resume."
+        prompt = "Focus on their skills, accomplishments, or notable projects mentioned in their resume."
 
-    # Construct the messages for the chat model
+    # Prepare messages for the OpenAI chat model
     messages = [
-        {"role": "system", "content": "You are an expert interviewer conducting a conversational and friendly interview."},
+        {"role": "system", "content": "You are an expert interviewer conducting a friendly and engaging interview."},
         {
             "role": "user",
             "content": f"""
-            Please generate a single, conversational, and human-like interview question.
-            - {prompt}
-            - Speak naturally, as if you're sitting across the candidate in a real interview.
-            - Base the question loosely on the resume content if applicable, but avoid being overly technical or scripted.
-            - If a previous answer is provided, consider following up naturally on it.
-
-            Resume Content:
-            {resume_text}
-
-            {f"Previous Answer: {previous_answer}" if previous_answer else ""}
+            Generate a concise and conversational interview question:
+            - Context: Resume details, job title ({job_title}), and job description ({job_description}).
+            - Resume Content: {resume_text}
+            {f"- Follow up based on the previous answer: {previous_answer}" if previous_answer else ""}
+            {prompt}
             """
-        }
+        },
     ]
-
-    # Call OpenAI Chat API to generate a question
+    # Call OpenAI Chat API
     response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",  # Replace with "gpt-4" if needed
+        model="gpt-3.5-turbo",  # The same model as in the original code
         messages=messages,
-        max_tokens=100,
-        temperature=0.8,  # Slightly increase creativity for varied questions
+        max_tokens=80,  # Limit to 80 tokens to ensure concise output
+        temperature=0.8,  # Allow creativity while staying relevant
         frequency_penalty=0.2,
         presence_penalty=0.3,
     )
 
-    # Prepend question number to the generated question
+    # Extract and format the generated question
     question = response['choices'][0]['message']['content'].strip()
     logging.info(f"Generated question: {question}")
     return f"Question {question_count}: {question}"
-
 
 
 def analyze_answer(user_answer: str) -> int:

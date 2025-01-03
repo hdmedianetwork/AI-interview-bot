@@ -33,6 +33,8 @@ class ResumeUploadResponse(BaseModel):
     filename: str
     file_path: str
     file_format: str
+    job_title: str
+    job_description: str
     status: str
     error: Optional[str]
     created_at: datetime

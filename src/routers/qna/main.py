@@ -42,7 +42,9 @@ logging.error(f"s3_client:{s3_client}")
 
 @router.post("/upload-resume", response_model=schemas.ResumeUploadResponse)
 async def upload_resume(
-    file: UploadFile = File(...),
+    job_title: str = Form(...),  # Get job title from form data
+    job_description: str = Form(...),  # Get job description from form data
+    file: UploadFile = File(...),  # Get resume file
     user_id: Optional[int] = Form(None),
     token: str = Depends(OAuth2PasswordBearer(tokenUrl="token")),
     db: Session = Depends(get_db),
@@ -103,20 +105,20 @@ async def upload_resume(
             raise ValueError("Unsupported file extension.")
 
         # Upload the file to S3
-        try:
-            s3_client.put_object(
-                Bucket=BUCKET_NAME,
-                Key=file_key,
-                Body=io.BytesIO(file_content).getvalue(),  # Reuse file content
-                ContentType=content_type
-            )
-            logging.info("File uploaded successfully to S3.")
-        except Exception as e:
-            logging.error(f"Failed to upload file to S3: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to upload file to S3."
-            )
+        # try:
+        #     s3_client.put_object(
+        #         Bucket=BUCKET_NAME,
+        #         Key=file_key,
+        #         Body=io.BytesIO(file_content).getvalue(),  # Reuse file content
+        #         ContentType=content_type
+        #     )
+        #     logging.info("File uploaded successfully to S3.")
+        # except Exception as e:
+        #     logging.error(f"Failed to upload file to S3: {str(e)}")
+        #     raise HTTPException(
+        #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        #         detail="Failed to upload file to S3."
+        #     )
 
         # Save file details in the database
         new_resume = models.ResumeUpload(
@@ -124,6 +126,8 @@ async def upload_resume(
             filename=file.filename,
             file_path=local_file_path,  # S3 key instead of local path
             file_format=file_format,
+            job_title = job_title,
+            job_description = job_description,
             status=True,
         )
         db.add(new_resume)
@@ -137,6 +141,8 @@ async def upload_resume(
             filename=new_resume.filename,
             file_path=f"https://{BUCKET_NAME}.s3.amazonaws.com/{file_key}",
             file_format=new_resume.file_format,
+            job_title = new_resume.job_title,
+            job_description = new_resume.job_description,
             status=new_resume.status,
             error=new_resume.error,
             created_at=new_resume.created_at,
@@ -180,11 +186,17 @@ async def start_interview(
             resume_text = controller.extract_text_from_pdf(resume_upload.file_path)
         else:
             resume_text = controller.extract_text_from_docx(resume_upload.file_path)
+        
+        # Retrieve job_title and job_description from ResumeUpload table
+        job_title = resume_upload.job_title
+        job_description = resume_upload.job_description
 
-        # Store resume_text in the global dictionary
+        # Store resume_text, job_title, and job_description in the global dictionary
         with session_data_lock:
             session_data_store[user.id] = {
                 "resume_text": resume_text,
+                "job_title": job_title,
+                "job_description": job_description,
                 "session_id": None  # Placeholder for session ID
             }
 
@@ -615,7 +627,7 @@ async def schedule_interview(
     subject = "Interview Scheduled"
     background_tasks.add_task(
         controller.send_email, 
-        to_email=interview.candidate_email, 
+        to_email=email, 
         subject=subject, 
         message=html_content, 
         content_type="html"
@@ -629,7 +641,7 @@ async def schedule_interview(
         "report": {
             "id": new_interview.id,
             "candidate_name": new_interview.candidate_name,
-            "candidate_email": new_interview.candidate_email,
+            "candidate_email": email,
             "interview_date": new_interview.interview_date,
             "interview_time": new_interview.interview_time
         }

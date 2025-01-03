@@ -26,6 +26,8 @@ class ResumeUpload(Base):
     filename = Column(String(255), nullable=False)
     file_path = Column(String(255), nullable=False)
     file_format = Column(String(50), nullable=False)
+    job_title = Column(String(255))
+    job_description = Column(Text)
     status = Column(String(20))
     error = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now())
