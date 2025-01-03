@@ -18,3 +18,4 @@ PyPDF2
 python-docx
 websocket-client
 boto3
+pyjwt

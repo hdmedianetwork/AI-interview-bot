@@ -1,7 +1,7 @@
 from . import models
 from . import schemas
 from . import controller
-from fastapi import UploadFile,File,Form
+from fastapi import UploadFile,File,Form,Query
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordBearer
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -478,30 +478,57 @@ async def generate_interview_report(
         }
 
 
-# Dummy database for storing interviews
-interview_db = []
+# Background task to check and update completed interviews
+async def mark_completed_interviews(db: Session):
+    now = datetime.utcnow()
+    interviews = db.query(models.ScheduleInterview).filter(
+        models.ScheduleInterview.is_completed == False, 
+        models.ScheduleInterview.interview_date <= now  # Interviews whose date has passed
+    ).all()
 
+    for interview in interviews:
+        interview.is_completed = True
+        db.commit()
 
-@router.post("/schedule-interview/", response_model=schemas.InterviewResponse)
+# Schedule this background task in your existing interview scheduling endpoint
+@router.post("/schedule-interview/", response_model=dict)
 async def schedule_interview(
-    interview: schemas.InterviewCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
+    interview: schemas.InterviewCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
 ):
+    # Extract email and user_id from the token
+    email = get_email_from_token(token)
+    user = db.query(users_model.User).filter(users_model.User.email == email).first()
+
+    # Check if user exists
+    if not user:
+        return {
+            "success": False,
+            "status": 404,
+            "message": "User not found.",
+            "report": None
+        }
+
     # Check if an interview already exists for the same time and interviewer
     existing_interview = db.query(models.ScheduleInterview).filter(
-        models.ScheduleInterview.interviewer == interview.interviewer,
-        models.ScheduleInterview.interview_date == interview.interview_date,
-        models.ScheduleInterview.interview_time == interview.interview_time,
+        models.ScheduleInterview.is_completed == False  # Check for ongoing interviews
     ).first()
-    if existing_interview:
-        raise HTTPException(
-            status_code=400, detail="The interviewer is already scheduled at this time."
-        )
 
-    # Create a new interview record
+    if existing_interview:
+        return {
+            "success": False,
+            "status": 400,
+            "message": "The interviewer is already scheduled at this time for an ongoing interview.",
+            "report": None
+        }
+
+    # Create a new interview record with user_id
     new_interview = models.ScheduleInterview(
+        user_id=user.id,  # Use the user's ID
         candidate_name=interview.candidate_name,
         candidate_email=interview.candidate_email,
-        interviewer=interview.interviewer,
         interview_date=interview.interview_date,
         interview_time=interview.interview_time,
     )
@@ -509,17 +536,123 @@ async def schedule_interview(
     db.commit()
     db.refresh(new_interview)
 
-    # Prepare and send email
+    # Add background task to check completed interviews
+    background_tasks.add_task(mark_completed_interviews, db)
+
+    # Generate confirmation link with token
+    confirmation_link = f"http://ec2-3-219-12-193.compute-1.amazonaws.com:5173/confirm-interview/{new_interview.id}?token={controller.generate_token(new_interview.id)}"
+
+    # Prepare HTML email content
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                background-color: #f9f9f9;
+                margin: 0;
+                padding: 0;
+            }}
+            .email-container {{
+                max-width: 600px;
+                margin: 50px auto;
+                background-color: #ffffff;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                overflow: hidden;
+            }}
+            .email-header {{
+                background-color: #4caf50;
+                color: #ffffff;
+                padding: 20px;
+                text-align: center;
+                font-size: 20px;
+            }}
+            .email-body {{
+                padding: 20px;
+                color: #333333;
+                line-height: 1.6;
+            }}
+            .email-body p {{
+                margin: 10px 0;
+            }}
+            .email-footer {{
+                background-color: #f1f1f1;
+                padding: 10px;
+                text-align: center;
+                font-size: 12px;
+                color: #666666;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="email-container">
+            <div class="email-header">
+                Interview Scheduled
+            </div>
+            <div class="email-body">
+            <p>Dear <span style="font-weight: bold;">{interview.candidate_name}</span>,</p>
+            <p>Your interview has been scheduled. Please find the details below:</p>
+            <p><strong>Date:</strong> {interview.interview_date.strftime('%d-%m-%Y')}</p>
+            <p><strong>Time:</strong> {interview.interview_time.strftime('%H:%M')}</p>
+            <p>We recommend that you join the meeting at least 10 minutes early to ensure your setup is working correctly. Please ensure you have a stable internet connection and a quiet environment for the interview. The meeting link will be shared with you separately.</p>
+            <p>To confirm the completion of your interview, please click the link below:</p>
+            <p><a href="{confirmation_link}">Confirm Interview Completion</a></p>
+            <p>Should you have any questions or need to reschedule, feel free to contact us at support@yourcompany.com.</p>
+            <p>Best regards,<br>Your Company</p>
+            </div>
+        <div class="email-footer">
+            &copy; 2025 Your Company. All rights reserved.
+        </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    # Send email with the confirmation link
     subject = "Interview Scheduled"
-    message = (
-        f"Dear {interview.candidate_name},\n\n"
-        f"Your interview has been scheduled with {interview.interviewer}.\n"
-        f"Date: {interview.interview_date.strftime('%d-%m-%Y')}\n"
-        f"Time: {interview.interview_time.strftime('%H:%M')}\n\n"
-        f"Best regards,\nYour Company"
-    )
     background_tasks.add_task(
-        controller.send_email, to_email=interview.candidate_email, subject=subject, message=message
+        controller.send_email, 
+        to_email=interview.candidate_email, 
+        subject=subject, 
+        message=html_content, 
+        content_type="html"
     )
 
-    return new_interview
+    # Return the response
+    return {
+        "success": True,
+        "status": 200,
+        "message": "Interview scheduled successfully.",
+        "report": {
+            "id": new_interview.id,
+            "candidate_name": new_interview.candidate_name,
+            "candidate_email": new_interview.candidate_email,
+            "interview_date": new_interview.interview_date,
+            "interview_time": new_interview.interview_time
+        }
+    }
+
+@router.get("/confirm-interview/{interview_id}")
+async def confirm_interview(
+    interview_id: int, 
+    token: str = Query(...),
+    db: Session = Depends(get_db)
+):
+    # Validate the token (this can include checking the token against a list of valid tokens)
+    if not controller.validate_token(token, interview_id):
+        return {"success": False, "message": "Invalid token."}
+
+    # Fetch the interview record
+    interview = db.query(models.ScheduleInterview).filter(models.ScheduleInterview.id == interview_id).first()
+
+    if not interview:
+        return {"success": False, "message": "Interview not found."}
+
+    # Update the interview status
+    interview.is_completed = True
+    db.commit()
+
+    return {"success": True, "message": "Interview marked as completed."}

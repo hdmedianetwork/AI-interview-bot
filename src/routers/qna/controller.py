@@ -14,6 +14,7 @@ from email.mime.text import MIMEText
 
 # Set up OpenAI API key
 openai.api_key = os.environ['OPENAI_KEY']
+SECRET_KEY =  os.environ['SECRET_KEY']
 
 def extract_text_from_pdf(file_path):
     reader = PdfReader(file_path)
@@ -222,3 +223,20 @@ def send_email(to_email: str, subject: str, message: str):
             server.sendmail(sender_email, to_email, msg.as_string())
     except Exception as e:
         print(f"Failed to send email: {e}")
+
+
+def generate_token(interview_id: int):
+    payload = {
+        "interview_id": interview_id,
+        "exp": datetime.utcnow() + timedelta(hours=1)  # Token expires in 1 hour
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+
+def validate_token(token: str, interview_id: int):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        return payload["interview_id"] == interview_id
+    except jwt.ExpiredSignatureError:
+        return False
+    except jwt.InvalidTokenError:
+        return False

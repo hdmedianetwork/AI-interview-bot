@@ -12,6 +12,8 @@ from sqlalchemy.exc import IntegrityError
 from loguru import logger as logging
 from src.routers.users.schemas import LoginSchema, TokenResponse
 import bcrypt
+import jwt
+
 
 # Dependency to get database session
 db_util = Database()

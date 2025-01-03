@@ -56,12 +56,12 @@ class Session(Base):
     end_time = Column(DateTime, nullable=True)
     
 class ScheduleInterview(Base):
-    __tablename__ = "interviews"
+    __tablename__ = "interviews_scheduler"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id =Column(Integer)
     candidate_name = Column(String, nullable=False)
     candidate_email = Column(String, nullable=False)
-    interviewer = Column(String, nullable=False)
     interview_date = Column(Date, nullable=False)
     interview_time = Column(Time, nullable=False)
     is_completed = Column(Boolean, default=False)

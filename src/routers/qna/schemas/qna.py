@@ -52,12 +52,12 @@ class EndInterviewRequest(BaseModel):
 class InterviewCreate(BaseModel):
     candidate_name: str
     candidate_email: EmailStr
-    interviewer: str
     interview_date: date
     interview_time: time
 
 class InterviewResponse(InterviewCreate):
     id: int
+    user_id: int
     is_completed: bool
 
     class Config:
